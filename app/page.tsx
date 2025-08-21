@@ -27,8 +27,8 @@ ChartJS.register(
   PointElement
 );
 
-/* ====== 타이포/컬러(섬트렌드 느낌) ====== */
-const ACCENT = "#6C5CE7";           // 보라 포인트
+/* ====== 디자인 토큰 (섬트렌드 느낌) ====== */
+const ACCENT = "#6C5CE7"; // 보라 포인트
 const ACCENT_SOFT = "rgba(108,92,231,.15)";
 const BG = "#0b1220";
 const CARD = "#0f172a";
@@ -38,8 +38,16 @@ const MUTED = "#9ca3af";
 const GRID = "rgba(148,163,184,0.12)";
 
 const PIE_COLORS = [
-  "#60a5fa", "#34d399", "#fbbf24", "#f472b6", "#a78bfa",
-  "#f87171", "#22d3ee", "#f59e0b", "#c084fc", "#4ade80",
+  "#60a5fa",
+  "#34d399",
+  "#fbbf24",
+  "#f472b6",
+  "#a78bfa",
+  "#f87171",
+  "#22d3ee",
+  "#f59e0b",
+  "#c084fc",
+  "#4ade80",
 ];
 
 type ShopItem = {
@@ -52,6 +60,22 @@ type ShopItem = {
   brand?: string;
 };
 
+/* ---------- 유틸: 모바일 여부 감지 ---------- */
+function useIsMobile(breakpoint = 900) {
+  const [isMobile, setIsMobile] = React.useState(false);
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const q = window.matchMedia(`(max-width:${breakpoint}px)`);
+    const onChange = () => setIsMobile(q.matches);
+    onChange();
+    q.addEventListener ? q.addEventListener("change", onChange) : q.addListener(onChange);
+    return () =>
+      q.removeEventListener ? q.removeEventListener("change", onChange) : q.removeListener(onChange);
+  }, [breakpoint]);
+  return isMobile;
+}
+
+/* ---------- 컴포넌트: 칩 버튼 ---------- */
 function Chip({
   active,
   onClick,
@@ -74,6 +98,7 @@ function Chip({
         background: active ? ACCENT_SOFT : CARD,
         fontSize: 13,
         fontWeight: 600,
+        minHeight: 40,
         transition: "all .15s ease",
         ...style,
       }}
@@ -83,7 +108,7 @@ function Chip({
   );
 }
 
-/** 라인차트 포인트 위 값(상대지수)을 그려주는 라이트 플러그인 */
+/* ---------- 라인차트 포인트 위 값 표기 플러그인 ---------- */
 const valueLabelPlugin = {
   id: "valueLabel",
   afterDatasetsDraw(chart: any) {
@@ -93,7 +118,6 @@ const valueLabelPlugin = {
     ctx.fillStyle = TEXT;
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
-
     const dataset = chart.getDatasetMeta(0);
     dataset.data.forEach((point: any, i: number) => {
       const val = chart.data.datasets[0].data[i];
@@ -107,6 +131,8 @@ const valueLabelPlugin = {
 };
 
 export default function Page() {
+  const isMobile = useIsMobile(900);
+
   const [keyword, setKeyword] = useState("스킨부스터");
   const [sort, setSort] = useState<"sim" | "date" | "asc" | "dsc">("sim");
 
@@ -115,9 +141,9 @@ export default function Page() {
 
   const [items, setItems] = useState<ShopItem[]>([]);
 
-  // 검색 트렌드
-  const [months, setMonths] = useState<1 | 3 | 6 | 12>(12); // 기간 프리셋
-  const [showIndex, setShowIndex] = useState(true);         // 상대지수 토글 (기본 ON)
+  // 검색 트렌드 상태
+  const [months, setMonths] = useState<1 | 3 | 6 | 12>(12);
+  const [showIndex, setShowIndex] = useState(true); // 상대지수 표기 ON
   const [trend, setTrend] = useState<{ period: string; ratio: number }[]>([]);
   const [trendLoading, setTrendLoading] = useState(false);
   const [trendError, setTrendError] = useState<string | null>(null);
@@ -238,9 +264,55 @@ export default function Page() {
   }
 
   useEffect(() => {
+    // 최초 1회
     runSearch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /* ---------- AI 인사이트 ---------- */
+  const insights = useMemo(() => {
+    const out: string[] = [];
+    // 가격 인사이트
+    if (priceNumbers.length > 0) {
+      const avg = Math.round(priceNumbers.reduce((a, b) => a + b, 0) / priceNumbers.length);
+      const min = priceNumbers[0];
+      const max = priceNumbers[priceNumbers.length - 1];
+      out.push(
+        `최근 상품의 정상 가격대는 대략 ${min.toLocaleString()}원 ~ ${max.toLocaleString()}원, 평균은 약 ${avg.toLocaleString()}원이에요. (극단값 5% 제외)`
+      );
+    } else {
+      out.push("가격 데이터가 적어서 분포를 판단하기 어려워요.");
+    }
+
+    // 브랜드 인사이트
+    if (brandPie.labels.length > 0) {
+      const total = brandPie.data.reduce((a, b) => a + b, 0) || 1;
+      const topIdx = brandPie.data.indexOf(Math.max(...brandPie.data));
+      const topName = brandPie.labels[topIdx];
+      const topPct = Math.round((brandPie.data[topIdx] / total) * 100);
+      out.push(`브랜드/몰은 **${topName}(${topPct}%)** 비중이 가장 높아요.`);
+    }
+
+    // 트렌드 인사이트
+    if (trend.length > 2) {
+      const last = trend[trend.length - 1]?.ratio || 0;
+      const prev = trend[trend.length - 2]?.ratio || 0;
+      const diff = Math.round(last - prev);
+      if (diff > 0) out.push(`최근 한 달 상대지수가 **+${diff}p** 상승했어요.`);
+      else if (diff < 0) out.push(`최근 한 달 상대지수가 **${diff}p** 하락했어요.`);
+      else out.push("최근 한 달 상대지수는 큰 변동이 없어요.");
+    }
+
+    // 판매 팁(간단 규칙)
+    if (priceNumbers.length > 0) {
+      const q25 = priceNumbers[Math.floor(priceNumbers.length * 0.25)];
+      const q75 = priceNumbers[Math.floor(priceNumbers.length * 0.75)];
+      out.push(
+        `판매가는 ${q25.toLocaleString()}원~${q75.toLocaleString()}원 사이(중간대)를 추천해요. 경쟁이 치열한 상단/하단 25% 구간은 피하는 게 좋아요.`
+      );
+    }
+    return out;
+  }, [priceNumbers, brandPie, trend]);
 
   /* ====== UI ====== */
   return (
@@ -290,6 +362,7 @@ export default function Page() {
               padding: "12px 14px",
               borderRadius: 12,
               fontSize: 14,
+              minHeight: 44,
             }}
           />
           <select
@@ -303,6 +376,7 @@ export default function Page() {
               padding: "12px 14px",
               borderRadius: 12,
               fontSize: 14,
+              minHeight: 44,
             }}
           >
             <option value="sim">유사도</option>
@@ -320,6 +394,7 @@ export default function Page() {
               color: "#fff",
               background: ACCENT,
               fontWeight: 700,
+              minHeight: 44,
             }}
           >
             {loading ? "로딩…" : "검색"}
@@ -342,63 +417,79 @@ export default function Page() {
           </div>
         )}
 
+        {/* AI 인사이트 */}
+        <section className="card" style={{ marginBottom: 12 }}>
+          <div className="section-title">🤖 AI 인사이트</div>
+          {insights.length === 0 ? (
+            <div style={{ color: MUTED }}>분석을 위한 데이터가 부족합니다.</div>
+          ) : (
+            <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
+              {insights.map((t, i) => (
+                <li key={i} style={{ color: TEXT }}>
+                  <span dangerouslySetInnerHTML={{ __html: t.replace(/\*\*(.*?)\*\*/g, "<b>$1</b>") }} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
         {/* 카드 레이아웃 : 가격/브랜드 */}
-        <section
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: 12,
-            marginBottom: 12,
-          }}
-        >
+        <section className="grid-cards">
           {/* 가격 히스토그램 */}
-          <div style={{ background: CARD, border: `1px solid ${CARD_BORDER}`, borderRadius: 14, padding: 16 }}>
-            <div style={{ fontWeight: 800, marginBottom: 8 }}>
+          <div className="card">
+            <div className="section-title">
               가격 분포(히스토그램) <span style={{ color: MUTED, fontWeight: 600 }}>상/하위 5% 제외</span>
             </div>
             {priceHist.labels.length === 0 ? (
               <div style={{ color: MUTED }}>가격 데이터 없음</div>
             ) : (
-              <Bar
-                data={{
-                  labels: priceHist.labels,
-                  datasets: [
-                    {
-                      label: "구간 비율(%)",
-                      data: priceHist.percents,
-                      backgroundColor: "#22c55e",
-                      borderColor: "#16a34a",
-                      borderWidth: 1,
-                      borderRadius: 6,
-                    },
-                  ],
-                }}
-                options={{
-                  plugins: {
-                    legend: { labels: { color: TEXT } },
-                    tooltip: {
-                      callbacks: {
-                        label: (ctx) =>
-                          `${ctx.raw as number}% (${priceHist.counts[ctx.dataIndex]}개)`,
+              <div style={{ height: isMobile ? 230 : 300 }}>
+                <Bar
+                  data={{
+                    labels: priceHist.labels,
+                    datasets: [
+                      {
+                        label: "구간 비율(%)",
+                        data: priceHist.percents,
+                        backgroundColor: "#22c55e",
+                        borderColor: "#16a34a",
+                        borderWidth: 1,
+                        borderRadius: 6,
+                      },
+                    ],
+                  }}
+                  options={{
+                    maintainAspectRatio: false,
+                    plugins: {
+                      legend: { labels: { color: TEXT, font: { size: isMobile ? 11 : 12 } } },
+                      tooltip: {
+                        callbacks: {
+                          label: (ctx) =>
+                            `${ctx.raw as number}% (${priceHist.counts[ctx.dataIndex]}개)`,
+                        },
                       },
                     },
-                  },
-                  scales: {
-                    x: { ticks: { color: MUTED }, grid: { color: GRID } },
-                    y: {
-                      ticks: { color: MUTED, callback: (v) => `${v}%` },
-                      grid: { color: GRID },
-                      suggestedMax: Math.max(25, Math.ceil(Math.max(...priceHist.percents) * 1.2)),
+                    scales: {
+                      x: { ticks: { color: MUTED, font: { size: isMobile ? 10 : 12 } }, grid: { color: GRID } },
+                      y: {
+                        ticks: {
+                          color: MUTED,
+                          font: { size: isMobile ? 10 : 12 },
+                          callback: (v) => `${v}%`,
+                        },
+                        grid: { color: GRID },
+                        suggestedMax: Math.max(25, Math.ceil(Math.max(...priceHist.percents) * 1.2)),
+                      },
                     },
-                  },
-                }}
-              />
+                  }}
+                />
+              </div>
             )}
           </div>
 
-          {/* 브랜드/몰 분포 - (2) 범례에 % 포함 */}
-          <div style={{ background: CARD, border: `1px solid ${CARD_BORDER}`, borderRadius: 14, padding: 16 }}>
-            <div style={{ fontWeight: 800, marginBottom: 8 }}>브랜드/몰 분포(Top 10)</div>
+          {/* 브랜드/몰 분포 */}
+          <div className="card">
+            <div className="section-title">브랜드/몰 분포(Top 10)</div>
             {brandPie.labels.length === 0 ? (
               <div style={{ color: MUTED }}>브랜드/몰 데이터 없음</div>
             ) : (() => {
@@ -408,30 +499,33 @@ export default function Page() {
                 return `${name} (${pct}%)`;
               });
               return (
-                <Pie
-                  data={{
-                    labels: labelsWithPct,
-                    datasets: [
-                      {
-                        data: brandPie.data,
-                        backgroundColor: brandPie.labels.map((_, i) => PIE_COLORS[i % PIE_COLORS.length]),
-                        borderColor: BG,
-                        borderWidth: 2,
+                <div style={{ height: isMobile ? 260 : 300 }}>
+                  <Pie
+                    data={{
+                      labels: labelsWithPct,
+                      datasets: [
+                        {
+                          data: brandPie.data,
+                          backgroundColor: brandPie.labels.map(
+                            (_, i) => PIE_COLORS[i % PIE_COLORS.length]
+                          ),
+                          borderColor: BG,
+                          borderWidth: 2,
+                        },
+                      ],
+                    }}
+                    options={{
+                      maintainAspectRatio: false,
+                      plugins: {
+                        legend: {
+                          position: isMobile ? "bottom" : "right",
+                          labels: { color: TEXT, boxWidth: 12, font: { size: isMobile ? 11 : 12 } },
+                        },
+                        tooltip: { enabled: true },
                       },
-                    ],
-                  }}
-                  options={{
-                    plugins: {
-                      legend: {
-                        position: "right",
-                        labels: { color: TEXT, boxWidth: 14, font: { size: 12 } },
-                      },
-                      tooltip: {
-                        enabled: true,
-                      },
-                    },
-                  }}
-                />
+                    }}
+                  />
+                </div>
               );
             })()}
           </div>
@@ -468,6 +562,7 @@ export default function Page() {
               background: CARD,
               color: TEXT,
               fontWeight: 700,
+              minHeight: 40,
             }}
             title="기간/토글 적용"
           >
@@ -475,63 +570,54 @@ export default function Page() {
           </button>
         </div>
 
-        {/* (3) 검색 트렌드 – 월별 상대지수 숫자 표시 + (4) 디자인 톤 정리 */}
-        <section style={{ background: CARD, border: `1px solid ${CARD_BORDER}`, borderRadius: 14, padding: 16 }}>
-          <div style={{ fontWeight: 800, marginBottom: 8 }}>
-            검색 트렌드(최근 {months}개월 · 월간, 상대지수)
-          </div>
+        {/* 검색 트렌드 */}
+        <section className="card">
+          <div className="section-title">검색 트렌드(최근 {months}개월 · 월간, 상대지수)</div>
           {trendLoading && <div style={{ color: MUTED }}>불러오는 중…</div>}
           {!!trendError && <div style={{ color: "#f43f5e" }}>오류: {trendError}</div>}
           {!trendLoading && !trendError && trend.length === 0 && (
             <div style={{ color: MUTED }}>표시할 데이터가 없습니다.</div>
           )}
           {trend.length > 0 && showIndex && (
-            <Line
-              data={{
-                labels: trend.map((d) => d.period.replace(/-/g, ".").slice(0, 7)), // YYYY.MM
-                datasets: [
-                  {
-                    label: "상대지수",
-                    data: trend.map((d) => Number(d.ratio.toFixed(2))),
-                    borderColor: ACCENT,
-                    backgroundColor: ACCENT_SOFT,
-                    pointBackgroundColor: "#a78bfa",
-                    pointBorderColor: "#4c1d95",
-                    borderWidth: 2,
-                    pointRadius: 3,
-                    tension: 0.25,
+            <div style={{ height: isMobile ? 240 : 300 }}>
+              <Line
+                data={{
+                  labels: trend.map((d) => d.period.replace(/-/g, ".").slice(0, 7)), // YYYY.MM
+                  datasets: [
+                    {
+                      label: "상대지수",
+                      data: trend.map((d) => Number(d.ratio.toFixed(2))),
+                      borderColor: ACCENT,
+                      backgroundColor: ACCENT_SOFT,
+                      pointBackgroundColor: "#a78bfa",
+                      pointBorderColor: "#4c1d95",
+                      borderWidth: isMobile ? 1.5 : 2,
+                      pointRadius: isMobile ? 2 : 3,
+                      tension: 0.25,
+                    },
+                  ],
+                }}
+                options={{
+                  maintainAspectRatio: false,
+                  plugins: { legend: { labels: { color: TEXT, font: { size: isMobile ? 11 : 12 } } } },
+                  scales: {
+                    x: { ticks: { color: MUTED, font: { size: isMobile ? 10 : 12 } }, grid: { color: GRID } },
+                    y: { ticks: { color: MUTED, font: { size: isMobile ? 10 : 12 } }, grid: { color: GRID } },
                   },
-                ],
-              }}
-              options={{
-                plugins: { legend: { labels: { color: TEXT } } },
-                scales: {
-                  x: { ticks: { color: MUTED }, grid: { color: GRID } },
-                  y: { ticks: { color: MUTED }, grid: { color: GRID } },
-                },
-              }}
-              plugins={[valueLabelPlugin]}
-            />
+                }}
+                plugins={[valueLabelPlugin]}
+              />
+            </div>
           )}
         </section>
 
         {/* 상품 리스트 */}
-        <section
-          style={{
-            marginTop: 12,
-            background: CARD,
-            border: `1px solid ${CARD_BORDER}`,
-            borderRadius: 14,
-            padding: 16,
-          }}
-        >
-          <div style={{ fontWeight: 800, marginBottom: 8 }}>
-            상품 리스트 총 {items.length.toLocaleString()}개
-          </div>
+        <section className="card" style={{ marginTop: 12 }}>
+          <div className="section-title">상품 리스트 총 {items.length.toLocaleString()}개</div>
           {items.length === 0 ? (
             <div style={{ color: MUTED }}>상품이 없습니다.</div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 12 }}>
+            <div className="products-grid">
               {items.map((it, i) => {
                 const toNum = (s?: string) => Number(String(s ?? "").replace(/[^\d]/g, "")) || 0;
                 const price = toNum(it.lprice) || toNum(it.price);
@@ -561,7 +647,11 @@ export default function Page() {
                       }}
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={it.image} alt={it.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      <img
+                        src={it.image}
+                        alt={it.title}
+                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      />
                     </div>
                     <div style={{ padding: 12 }}>
                       <div
@@ -578,7 +668,14 @@ export default function Page() {
                         }}
                         dangerouslySetInnerHTML={{ __html: it.title }}
                       />
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: MUTED }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          fontSize: 12,
+                          color: MUTED,
+                        }}
+                      >
                         <span style={{ color: TEXT }}>{price ? `${price.toLocaleString()}원` : "-"}</span>
                         <span>{it.mallName || it.brand || ""}</span>
                       </div>
@@ -590,6 +687,54 @@ export default function Page() {
           )}
         </section>
       </div>
+
+      {/* 반응형 스타일 */}
+      <style jsx>{`
+        .grid-cards {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 12px;
+          margin-bottom: 12px;
+        }
+        .card {
+          background: ${CARD};
+          border: 1px solid ${CARD_BORDER};
+          border-radius: 14px;
+          padding: 16px;
+        }
+        .section-title {
+          font-weight: 800;
+          margin-bottom: 8px;
+        }
+        .products-grid {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 12px;
+        }
+        @media (max-width: 900px) {
+          .grid-cards {
+            grid-template-columns: 1fr;
+            gap: 10px;
+          }
+          .products-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+          }
+          .card {
+            padding: 12px;
+            border-radius: 12px;
+          }
+          .section-title {
+            font-size: 14px;
+          }
+        }
+        @media (max-width: 480px) {
+          .products-grid {
+            grid-template-columns: 1fr;
+            gap: 8px;
+          }
+        }
+      `}</style>
     </main>
   );
 }
