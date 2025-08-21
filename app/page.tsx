@@ -27,8 +27,8 @@ ChartJS.register(
   PointElement
 );
 
-/* ====== 디자인 토큰 (섬트렌드 느낌) ====== */
-const ACCENT = "#6C5CE7"; // 보라 포인트
+/* ====== 디자인 토큰 ====== */
+const ACCENT = "#6C5CE7";
 const ACCENT_SOFT = "rgba(108,92,231,.15)";
 const BG = "#0b1220";
 const CARD = "#0f172a";
@@ -75,7 +75,7 @@ function useIsMobile(breakpoint = 900) {
   return isMobile;
 }
 
-/* ---------- 컴포넌트: 칩 버튼 ---------- */
+/* ---------- 칩 ---------- */
 function Chip({
   active,
   onClick,
@@ -98,7 +98,7 @@ function Chip({
         background: active ? ACCENT_SOFT : CARD,
         fontSize: 13,
         fontWeight: 600,
-        minHeight: 40,
+        minHeight: 36,
         transition: "all .15s ease",
         ...style,
       }}
@@ -108,7 +108,7 @@ function Chip({
   );
 }
 
-/* ---------- 라인차트 포인트 위 값 표기 플러그인 ---------- */
+/* ---------- 라인차트 값 라벨 플러그인 ---------- */
 const valueLabelPlugin = {
   id: "valueLabel",
   afterDatasetsDraw(chart: any) {
@@ -143,15 +143,18 @@ export default function Page() {
 
   // 검색 트렌드 상태
   const [months, setMonths] = useState<1 | 3 | 6 | 12>(12);
-  const [showIndex, setShowIndex] = useState(true); // 상대지수 표기 ON
+  const [showIndex, setShowIndex] = useState(true);
   const [trend, setTrend] = useState<{ period: string; ratio: number }[]>([]);
   const [trendLoading, setTrendLoading] = useState(false);
   const [trendError, setTrendError] = useState<string | null>(null);
 
+  // 연관검색어 상태
+  const [suggests, setSuggests] = useState<string[]>([]);
+  const [sugLoading, setSugLoading] = useState(false);
+
   /* ---------- 가격 숫자 파싱 & 상/하위 5% 제외 ---------- */
   const priceNumbers = useMemo(() => {
     const toNum = (s?: string) => Number(String(s ?? "").replace(/[^\d]/g, "")) || 0;
-
     const nums = items
       .map((it) => {
         const n = toNum(it.lprice) || toNum(it.price);
@@ -251,6 +254,29 @@ export default function Page() {
     }
   }
 
+  // 연관검색어 불러오기 (디바운스 250ms)
+  useEffect(() => {
+    if (!keyword) {
+      setSuggests([]);
+      return;
+    }
+    const t = setTimeout(async () => {
+      try {
+        setSugLoading(true);
+        const r = await fetch(`/api/naver-suggest?q=${encodeURIComponent(keyword)}`, {
+          cache: "no-store",
+        });
+        const json = await r.json();
+        setSuggests(json?.suggestions || []);
+      } catch {
+        setSuggests([]);
+      } finally {
+        setSugLoading(false);
+      }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [keyword]);
+
   async function runSearch() {
     setLoading(true);
     setError(null);
@@ -272,7 +298,6 @@ export default function Page() {
   /* ---------- AI 인사이트 ---------- */
   const insights = useMemo(() => {
     const out: string[] = [];
-    // 가격 인사이트
     if (priceNumbers.length > 0) {
       const avg = Math.round(priceNumbers.reduce((a, b) => a + b, 0) / priceNumbers.length);
       const min = priceNumbers[0];
@@ -283,8 +308,6 @@ export default function Page() {
     } else {
       out.push("가격 데이터가 적어서 분포를 판단하기 어려워요.");
     }
-
-    // 브랜드 인사이트
     if (brandPie.labels.length > 0) {
       const total = brandPie.data.reduce((a, b) => a + b, 0) || 1;
       const topIdx = brandPie.data.indexOf(Math.max(...brandPie.data));
@@ -292,8 +315,6 @@ export default function Page() {
       const topPct = Math.round((brandPie.data[topIdx] / total) * 100);
       out.push(`브랜드/몰은 **${topName}(${topPct}%)** 비중이 가장 높아요.`);
     }
-
-    // 트렌드 인사이트
     if (trend.length > 2) {
       const last = trend[trend.length - 1]?.ratio || 0;
       const prev = trend[trend.length - 2]?.ratio || 0;
@@ -302,8 +323,6 @@ export default function Page() {
       else if (diff < 0) out.push(`최근 한 달 상대지수가 **${diff}p** 하락했어요.`);
       else out.push("최근 한 달 상대지수는 큰 변동이 없어요.");
     }
-
-    // 판매 팁(간단 규칙)
     if (priceNumbers.length > 0) {
       const q25 = priceNumbers[Math.floor(priceNumbers.length * 0.25)];
       const q75 = priceNumbers[Math.floor(priceNumbers.length * 0.75)];
@@ -336,7 +355,7 @@ export default function Page() {
       </div>
 
       <div style={{ maxWidth: 1280, margin: "0 auto", padding: "12px 18px 28px" }}>
-        {/* (1) 검색창: 타이틀 아래 */}
+        {/* 검색창 */}
         <section
           style={{
             display: "flex",
@@ -346,7 +365,7 @@ export default function Page() {
             borderRadius: 14,
             padding: 12,
             marginTop: 12,
-            marginBottom: 16,
+            marginBottom: 8,
           }}
         >
           <input
@@ -401,6 +420,38 @@ export default function Page() {
           </button>
         </section>
 
+        {/* 연관검색어 칩 */}
+        <section
+          style={{
+            background: CARD,
+            border: `1px solid ${CARD_BORDER}`,
+            borderRadius: 14,
+            padding: 12,
+            marginBottom: 16,
+          }}
+        >
+          <div style={{ color: MUTED, fontSize: 13, marginBottom: 8 }}>
+            연관검색어 {sugLoading ? "(불러오는 중…)" : ""}
+          </div>
+          {suggests.length === 0 ? (
+            <div style={{ color: MUTED, fontSize: 13 }}>제안어가 없습니다.</div>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {suggests.map((s) => (
+                <Chip
+                  key={s}
+                  onClick={() => {
+                    setKeyword(s);
+                    setTimeout(runSearch, 0);
+                  }}
+                >
+                  {s}
+                </Chip>
+              ))}
+            </div>
+          )}
+        </section>
+
         {!!error && (
           <div
             style={{
@@ -426,7 +477,11 @@ export default function Page() {
             <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
               {insights.map((t, i) => (
                 <li key={i} style={{ color: TEXT }}>
-                  <span dangerouslySetInnerHTML={{ __html: t.replace(/\*\*(.*?)\*\*/g, "<b>$1</b>") }} />
+                  <span
+                    dangerouslySetInnerHTML={{
+                      __html: t.replace(/\*\*(.*?)\*\*/g, "<b>$1</b>"),
+                    }}
+                  />
                 </li>
               ))}
             </ul>
@@ -531,7 +586,7 @@ export default function Page() {
           </div>
         </section>
 
-        {/* 컨트롤 바(기간 프리셋 & 상대지수 토글) */}
+        {/* 컨트롤 바 */}
         <div
           style={{
             display: "flex",
@@ -582,7 +637,7 @@ export default function Page() {
             <div style={{ height: isMobile ? 240 : 300 }}>
               <Line
                 data={{
-                  labels: trend.map((d) => d.period.replace(/-/g, ".").slice(0, 7)), // YYYY.MM
+                  labels: trend.map((d) => d.period.replace(/-/g, ".").slice(0, 7)),
                   datasets: [
                     {
                       label: "상대지수",
