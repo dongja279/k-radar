@@ -9,23 +9,35 @@ function fmt(d) {
   return `${y}-${m}-${dd}`;
 }
 
-// 최근 12개월(지난달 말까지)
-function monthRange() {
+// 지난달 말까지, N개월 구간
+function monthRange(n = 12) {
   const now = new Date();
-  const first = new Date(now.getFullYear(), now.getMonth(), 1);
-  const end = new Date(first.getTime() - 24 * 60 * 60 * 1000); // 지난달 말
-  const start = new Date(end.getFullYear(), end.getMonth() - 11, 1); // 12개월 전 1일
+  const firstOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const end = new Date(firstOfThisMonth.getTime() - 24 * 60 * 60 * 1000); // 지난달 말
+  const start = new Date(end.getFullYear(), end.getMonth() - (n - 1), 1); // n개월 전 1일
   return { startDate: fmt(start), endDate: fmt(end) };
 }
 
 export async function POST(req) {
   try {
-    const { keyword } = await req.json();
-    if (!keyword) {
-      return NextResponse.json({ ok: false, error: "keyword required" }, { status: 400 });
+    const body = await req.json();
+    const keyword = body?.keyword?.trim();
+    const months = Number(body?.months) || 12;
+    const keywords = Array.isArray(body?.keywords)
+      ? body.keywords.filter((s) => typeof s === "string" && s.trim()).slice(0, 20)
+      : [];
+
+    if (!keyword && keywords.length === 0) {
+      return NextResponse.json({ ok: false, error: "keyword(s) required" }, { status: 400 });
     }
 
-    const { startDate, endDate } = monthRange();
+    const { startDate, endDate } = monthRange(months);
+
+    // keywordGroups 구성 (메인 + 연관들)
+    const groups = [
+      ...(keyword ? [{ groupName: keyword, keywords: [keyword] }] : []),
+      ...keywords.map((k) => ({ groupName: k, keywords: [k] })),
+    ];
 
     const r = await fetch("https://openapi.naver.com/v1/datalab/search", {
       method: "POST",
@@ -38,8 +50,9 @@ export async function POST(req) {
         startDate,
         endDate,
         timeUnit: "month",
-        keywordGroups: [{ groupName: keyword, keywords: [keyword] }],
+        keywordGroups: groups,
       }),
+      cache: "no-store",
     });
 
     if (!r.ok) {
@@ -48,12 +61,24 @@ export async function POST(req) {
     }
 
     const json = await r.json();
-    const series = (json?.results?.[0]?.data || []).map((d) => ({
-      period: d.period,             // 'YYYY-MM'
-      ratio: Number(d.ratio) || 0,
-    }));
+    const results = json?.results || [];
 
-    return NextResponse.json({ ok: true, series });
+    // 메인 시리즈
+    const mainSeries =
+      results.find((x) => x.title === keyword)?.data?.map((d) => ({
+        period: d.period,
+        ratio: Number(d.ratio) || 0,
+      })) || [];
+
+    // 연관 키워드별 시리즈
+    const byKeyword = {};
+    for (const k of keywords) {
+      const found = results.find((x) => x.title === k);
+      byKeyword[k] =
+        found?.data?.map((d) => ({ period: d.period, ratio: Number(d.ratio) || 0 })) || [];
+    }
+
+    return NextResponse.json({ ok: true, series: mainSeries, byKeyword, months });
   } catch (e) {
     return NextResponse.json({ ok: false, error: String(e) }, { status: 500 });
   }
