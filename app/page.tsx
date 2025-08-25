@@ -60,7 +60,10 @@ type ShopItem = {
   brand?: string;
 };
 
-/* ---------- 유틸: 모바일 여부 감지 ---------- */
+const toNum = (s?: string) => Number(String(s ?? "").replace(/[^\d]/g, "")) || 0;
+const krw = (n: number) => n.toLocaleString() + "원";
+
+/* 반응형 훅 */
 function useIsMobile(breakpoint = 900) {
   const [isMobile, setIsMobile] = React.useState(false);
   React.useEffect(() => {
@@ -75,7 +78,7 @@ function useIsMobile(breakpoint = 900) {
   return isMobile;
 }
 
-/* ---------- 칩 ---------- */
+/* 칩 */
 function Chip({
   active,
   onClick,
@@ -108,7 +111,7 @@ function Chip({
   );
 }
 
-/* ---------- 라인차트 값 라벨 플러그인 ---------- */
+/* 라인차트 값 라벨 */
 const valueLabelPlugin = {
   id: "valueLabel",
   afterDatasetsDraw(chart: any) {
@@ -122,9 +125,7 @@ const valueLabelPlugin = {
     dataset.data.forEach((point: any, i: number) => {
       const val = chart.data.datasets[0].data[i];
       if (val == null) return;
-      const x = point.x;
-      const y = point.y - 6;
-      ctx.fillText(Math.round(val as number).toString(), x, y);
+      ctx.fillText(Math.round(val as number).toString(), point.x, point.y - 6);
     });
     ctx.restore();
   },
@@ -135,33 +136,26 @@ export default function Page() {
 
   const [keyword, setKeyword] = useState("스킨부스터");
   const [sort, setSort] = useState<"sim" | "date" | "asc" | "dsc">("sim");
-
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [items, setItems] = useState<ShopItem[]>([]);
 
-  // 검색 트렌드 상태
+  // 데이터랩 트렌드
   const [months, setMonths] = useState<1 | 3 | 6 | 12>(12);
   const [showIndex, setShowIndex] = useState(true);
   const [trend, setTrend] = useState<{ period: string; ratio: number }[]>([]);
   const [trendLoading, setTrendLoading] = useState(false);
   const [trendError, setTrendError] = useState<string | null>(null);
 
-  // 연관검색어 상태
+  // 연관검색어
   const [suggests, setSuggests] = useState<string[]>([]);
   const [sugLoading, setSugLoading] = useState(false);
 
-  /* ---------- 가격 숫자 파싱 & 상/하위 5% 제외 ---------- */
+  /* 가격 숫자 추출 & 5% 양끝 제거 */
   const priceNumbers = useMemo(() => {
-    const toNum = (s?: string) => Number(String(s ?? "").replace(/[^\d]/g, "")) || 0;
     const nums = items
-      .map((it) => {
-        const n = toNum(it.lprice) || toNum(it.price);
-        if (n > 0) return n;
-        const m = it.title?.match(/\d[\d,]{3,}/g)?.[0];
-        return toNum(m);
-      })
+      .map((it) => toNum(it.lprice) || toNum(it.price) || toNum(it.title?.match(/\d[\d,]{3,}/g)?.[0]))
       .filter((n) => n > 0)
       .sort((a, b) => a - b);
 
@@ -173,13 +167,12 @@ export default function Page() {
       const frac = pos - i;
       return nums[i + 1] !== undefined ? nums[i] + frac * (nums[i + 1] - nums[i]) : nums[i];
     };
-
     const lo = q(0.05);
     const hi = q(0.95);
     return nums.filter((n) => n >= lo && n <= hi);
   }, [items]);
 
-  /* ---------- 히스토그램 ---------- */
+  /* 히스토그램 */
   const priceHist = useMemo(() => {
     if (priceNumbers.length === 0) {
       return { labels: [] as string[], counts: [] as number[], percents: [] as number[] };
@@ -204,7 +197,7 @@ export default function Page() {
     return { labels, counts, percents };
   }, [priceNumbers]);
 
-  /* ---------- 브랜드/몰 분포 (Top 10) ---------- */
+  /* 브랜드/몰 분포 */
   const brandPie = useMemo(() => {
     if (items.length === 0) return { labels: [] as string[], data: [] as number[] };
     const map = new Map<string, number>();
@@ -216,11 +209,10 @@ export default function Page() {
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
-
     return { labels: arr.map((d) => d.name), data: arr.map((d) => d.count) };
   }, [items]);
 
-  /* ---------- API 호출 ---------- */
+  /* API 호출 */
   async function fetchShop() {
     const url = `/api/naver-shop?q=${encodeURIComponent(keyword)}&sort=${sort}&display=100`;
     const r = await fetch(url);
@@ -254,7 +246,7 @@ export default function Page() {
     }
   }
 
-  // 연관검색어 불러오기 (디바운스 250ms)
+  // 연관검색어 (디바운스 250ms)
   useEffect(() => {
     if (!keyword) {
       setSuggests([]);
@@ -290,53 +282,112 @@ export default function Page() {
   }
 
   useEffect(() => {
-    // 최초 1회
     runSearch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ---------- AI 인사이트 ---------- */
-  const insights = useMemo(() => {
-    const out: string[] = [];
+  /* ====== AI 인사이트(섹션형 불릿) ====== */
+  type InsightSection = { icon: string; title: string; bullets: string[] };
+
+  const insightSections: InsightSection[] = useMemo(() => {
+    const sections: InsightSection[] = [];
+
+    // 가격
     if (priceNumbers.length > 0) {
-      const avg = Math.round(priceNumbers.reduce((a, b) => a + b, 0) / priceNumbers.length);
+      const n = priceNumbers.length;
+      const pick = (p: number) => priceNumbers[Math.max(0, Math.min(n - 1, Math.round(p * (n - 1))))];
+      const q1 = pick(0.25);
+      const q2 = pick(0.5);
+      const q3 = pick(0.75);
       const min = priceNumbers[0];
-      const max = priceNumbers[priceNumbers.length - 1];
-      out.push(
-        `최근 상품의 정상 가격대는 대략 ${min.toLocaleString()}원 ~ ${max.toLocaleString()}원, 평균은 약 ${avg.toLocaleString()}원이에요. (극단값 5% 제외)`
-      );
+      const max = priceNumbers[n - 1];
+      const avg = Math.round(priceNumbers.reduce((a, b) => a + b, 0) / n);
+
+      sections.push({
+        icon: "💰",
+        title: "가격대 스캔",
+        bullets: [
+          `주력 분포: ${krw(q1)} ~ ${krw(q3)} (Q1~Q3)`,
+          `중앙값: ${krw(q2)} / 평균: ${krw(avg)}`,
+          `권장 판매가: **${krw(q1)} ~ ${krw(q3)}**`,
+          `주의: ${krw(min)} 이하 덤핑 · ${krw(max)} 이상 프리미엄은 효율 저하 가능`,
+        ],
+      });
     } else {
-      out.push("가격 데이터가 적어서 분포를 판단하기 어려워요.");
+      sections.push({
+        icon: "💰",
+        title: "가격대 스캔",
+        bullets: ["가격 데이터가 부족합니다. 키워드/기간을 조정해 보세요."],
+      });
     }
+
+    // 브랜드
     if (brandPie.labels.length > 0) {
       const total = brandPie.data.reduce((a, b) => a + b, 0) || 1;
-      const topIdx = brandPie.data.indexOf(Math.max(...brandPie.data));
-      const topName = brandPie.labels[topIdx];
-      const topPct = Math.round((brandPie.data[topIdx] / total) * 100);
-      out.push(`브랜드/몰은 **${topName}(${topPct}%)** 비중이 가장 높아요.`);
+      const pairs = brandPie.labels.map((name, i) => ({ name, cnt: brandPie.data[i] }));
+      const top3 = pairs.slice(0, 3);
+      const topShare = Math.round((top3.reduce((s, p) => s + p.cnt, 0) / total) * 100);
+      sections.push({
+        icon: "🏷️",
+        title: "브랜드 구도",
+        bullets: [
+          ...top3.map((p) => `${p.name}: ${Math.round((p.cnt / total) * 100)}%`),
+          topShare >= 65
+            ? "진입 난이도: 상 (과점 구조 → 가격/후킹 차별화 필요)"
+            : "진입 난이도: 중 (분산 경쟁 → 세트/구성 전략 유효)",
+        ],
+      });
     }
-    if (trend.length > 2) {
-      const last = trend[trend.length - 1]?.ratio || 0;
-      const prev = trend[trend.length - 2]?.ratio || 0;
-      const diff = Math.round(last - prev);
-      if (diff > 0) out.push(`최근 한 달 상대지수가 **+${diff}p** 상승했어요.`);
-      else if (diff < 0) out.push(`최근 한 달 상대지수가 **${diff}p** 하락했어요.`);
-      else out.push("최근 한 달 상대지수는 큰 변동이 없어요.");
+
+    // 트렌드
+    if (trend.length > 0) {
+      const last = trend[trend.length - 1];
+      const prev = trend[trend.length - 2] || last;
+      const peak = trend.reduce((p, c) => (c.ratio > p.ratio ? c : p), trend[0]);
+      const low = trend.reduce((p, c) => (c.ratio < p.ratio ? c : p), trend[0]);
+      const mom = Math.round((last.ratio - prev.ratio) * 10) / 10;
+      const tail = trend.slice(-3).map((d) => d.ratio);
+      const slope = tail.length >= 2 ? Math.round((tail[tail.length - 1] - tail[0]) * 10) / 10 : 0;
+      const slopeTxt = slope > 1 ? "상승" : slope < -1 ? "하락" : "보합";
+
+      sections.push({
+        icon: "📈",
+        title: "수요 트렌드",
+        bullets: [
+          `최근값: ${Math.round(last.ratio)}p (전월 대비 ${mom >= 0 ? "+" : ""}${mom}p)`,
+          `최근 3개월 흐름: **${slopeTxt}**`,
+          `피크: ${peak.period.replace("-", ".")} (${Math.round(peak.ratio)}p)`,
+          `저점: ${low.period.replace("-", ".")} (${Math.round(low.ratio)}p)`,
+          "시즌성 고려해 재고·광고 강도를 조절하세요.",
+        ],
+      });
+    } else {
+      sections.push({
+        icon: "📈",
+        title: "수요 트렌드",
+        bullets: ["데이터랩 트렌드가 부족합니다. 기간/키워드를 조정해 다시 확인하세요."],
+      });
     }
-    if (priceNumbers.length > 0) {
-      const q25 = priceNumbers[Math.floor(priceNumbers.length * 0.25)];
-      const q75 = priceNumbers[Math.floor(priceNumbers.length * 0.75)];
-      out.push(
-        `판매가는 ${q25.toLocaleString()}원~${q75.toLocaleString()}원 사이(중간대)를 추천해요. 경쟁이 치열한 상단/하단 25% 구간은 피하는 게 좋아요.`
-      );
-    }
-    return out;
+
+    // 실행 체크리스트
+    sections.push({
+      icon: "✅",
+      title: "바로 실행 체크리스트",
+      bullets: [
+        "가격은 Q1~Q3 사이로 세팅",
+        "TOP 브랜드 대비 키워드/카피 준비",
+        "트렌드 기울기에 따라 광고비 증감",
+        "인기 속성(세트/저자극 등) 키워드로 상세페이지 보강",
+      ],
+    });
+
+    return sections;
   }, [priceNumbers, brandPie, trend]);
 
   /* ====== UI ====== */
   return (
     <main style={{ background: BG, minHeight: "100vh", color: TEXT }}>
-      {/* 상단 타이틀만 고정 */}
+      {/* 상단 타이틀 */}
       <div
         style={{
           position: "sticky",
@@ -420,7 +471,7 @@ export default function Page() {
           </button>
         </section>
 
-        {/* 연관검색어 칩 */}
+        {/* 연관검색어 */}
         <section
           style={{
             background: CARD,
@@ -452,45 +503,35 @@ export default function Page() {
           )}
         </section>
 
-        {!!error && (
-          <div
-            style={{
-              background: CARD,
-              border: `1px solid ${CARD_BORDER}`,
-              color: "#fca5a5",
-              borderRadius: 12,
-              padding: 12,
-              marginBottom: 12,
-              fontWeight: 700,
-            }}
-          >
-            오류: {error}
-          </div>
-        )}
-
-        {/* AI 인사이트 */}
+        {/* AI 인사이트 - 섹션형 불릿 */}
         <section className="card" style={{ marginBottom: 12 }}>
-          <div className="section-title">🤖 AI 인사이트</div>
-          {insights.length === 0 ? (
-            <div style={{ color: MUTED }}>분석을 위한 데이터가 부족합니다.</div>
-          ) : (
-            <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
-              {insights.map((t, i) => (
-                <li key={i} style={{ color: TEXT }}>
-                  <span
-                    dangerouslySetInnerHTML={{
-                      __html: t.replace(/\*\*(.*?)\*\*/g, "<b>$1</b>"),
-                    }}
-                  />
-                </li>
-              ))}
-            </ul>
-          )}
+          <div className="section-title">🤖 AI 인사이트 (셀러 전용 코멘트)</div>
+          <div style={{ display: "grid", gap: 10 }}>
+            {insightSections.map((sec, idx) => (
+              <div
+                key={idx}
+                style={{
+                  border: `1px dashed ${CARD_BORDER}`,
+                  borderRadius: 10,
+                  padding: 12,
+                  background: "rgba(108,92,231,.04)",
+                }}
+              >
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                  {sec.icon} {sec.title}
+                </div>
+                <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
+                  {sec.bullets.map((b, i) => (
+                    <li key={i} dangerouslySetInnerHTML={{ __html: b.replace(/\*\*(.*?)\*\*/g, "<b>$1</b>") }} />
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
         </section>
 
-        {/* 카드 레이아웃 : 가격/브랜드 */}
+        {/* 가격/브랜드 */}
         <section className="grid-cards">
-          {/* 가격 히스토그램 */}
           <div className="card">
             <div className="section-title">
               가격 분포(히스토그램) <span style={{ color: MUTED, fontWeight: 600 }}>상/하위 5% 제외</span>
@@ -519,19 +560,14 @@ export default function Page() {
                       legend: { labels: { color: TEXT, font: { size: isMobile ? 11 : 12 } } },
                       tooltip: {
                         callbacks: {
-                          label: (ctx) =>
-                            `${ctx.raw as number}% (${priceHist.counts[ctx.dataIndex]}개)`,
+                          label: (ctx) => `${ctx.raw as number}% (${priceHist.counts[ctx.dataIndex]}개)`,
                         },
                       },
                     },
                     scales: {
                       x: { ticks: { color: MUTED, font: { size: isMobile ? 10 : 12 } }, grid: { color: GRID } },
                       y: {
-                        ticks: {
-                          color: MUTED,
-                          font: { size: isMobile ? 10 : 12 },
-                          callback: (v) => `${v}%`,
-                        },
+                        ticks: { color: MUTED, font: { size: isMobile ? 10 : 12 }, callback: (v) => `${v}%` },
                         grid: { color: GRID },
                         suggestedMax: Math.max(25, Math.ceil(Math.max(...priceHist.percents) * 1.2)),
                       },
@@ -542,7 +578,6 @@ export default function Page() {
             )}
           </div>
 
-          {/* 브랜드/몰 분포 */}
           <div className="card">
             <div className="section-title">브랜드/몰 분포(Top 10)</div>
             {brandPie.labels.length === 0 ? (
@@ -561,9 +596,7 @@ export default function Page() {
                       datasets: [
                         {
                           data: brandPie.data,
-                          backgroundColor: brandPie.labels.map(
-                            (_, i) => PIE_COLORS[i % PIE_COLORS.length]
-                          ),
+                          backgroundColor: brandPie.labels.map((_, i) => PIE_COLORS[i % PIE_COLORS.length]),
                           borderColor: BG,
                           borderWidth: 2,
                         },
@@ -674,7 +707,6 @@ export default function Page() {
           ) : (
             <div className="products-grid">
               {items.map((it, i) => {
-                const toNum = (s?: string) => Number(String(s ?? "").replace(/[^\d]/g, "")) || 0;
                 const price = toNum(it.lprice) || toNum(it.price);
                 return (
                   <a
@@ -702,11 +734,7 @@ export default function Page() {
                       }}
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={it.image}
-                        alt={it.title}
-                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                      />
+                      <img src={it.image} alt={it.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     </div>
                     <div style={{ padding: 12 }}>
                       <div
@@ -723,15 +751,8 @@ export default function Page() {
                         }}
                         dangerouslySetInnerHTML={{ __html: it.title }}
                       />
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          fontSize: 12,
-                          color: MUTED,
-                        }}
-                      >
-                        <span style={{ color: TEXT }}>{price ? `${price.toLocaleString()}원` : "-"}</span>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: MUTED }}>
+                        <span style={{ color: TEXT }}>{price ? krw(price) : "-"}</span>
                         <span>{it.mallName || it.brand || ""}</span>
                       </div>
                     </div>
