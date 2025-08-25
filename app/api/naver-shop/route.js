@@ -1,96 +1,72 @@
 // app/api/naver-shop/route.js
+export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 
+// 아주 단순한 한글 토크나이저 (2~6글자, 숫자/특수문자 제거)
+function extractTokens(txt = "") {
+  const clean = String(txt).replace(/<[^>]*>/g, " ").replace(/[^\uAC00-\uD7A3a-zA-Z0-9\s]/g, " ");
+  const tokens = clean.match(/[\uAC00-\uD7A3a-zA-Z0-9]{2,6}/g) || [];
+  return tokens.filter(t => !/^[0-9]+$/.test(t)); // 숫자만 제외
+}
+
 export async function GET(req) {
-  try {
-    const { searchParams } = new URL(req.url);
-    const q = searchParams.get("q") || "런닝화";
-    const sort = searchParams.get("sort") || "sim"; // sim | date | asc | dsc
-    const display = Math.min(parseInt(searchParams.get("display") || "100", 10), 100);
+  const { searchParams } = new URL(req.url);
+  const q = searchParams.get("q") || "런닝화";
+  const sort = searchParams.get("sort") || "sim";
+  const display = Math.min(Number(searchParams.get("display") || 100), 100);
+  const start = 1;
 
-    const url = new URL("https://openapi.naver.com/v1/search/shop.json");
-    url.searchParams.set("query", q);
-    url.searchParams.set("display", String(display));
-    url.searchParams.set("start", "1");
-    url.searchParams.set("sort", sort);
+  const url = `https://openapi.naver.com/v1/search/shop.json?query=${encodeURIComponent(q)}&sort=${sort}&display=${display}&start=${start}`;
 
-    const res = await fetch(url, {
-      headers: {
-        "X-Naver-Client-Id": process.env.NAVER_CLIENT_ID,
-        "X-Naver-Client-Secret": process.env.NAVER_CLIENT_SECRET,
-      },
-      cache: "no-store",
-    });
+  const r = await fetch(url, {
+    headers: {
+      "X-Naver-Client-Id": process.env.NAVER_CLIENT_ID,
+      "X-Naver-Client-Secret": process.env.NAVER_CLIENT_SECRET,
+    },
+    cache: "no-store",
+  });
 
-    if (!res.ok) {
-      const text = await res.text();
-      return NextResponse.json({ ok: false, error: text }, { status: res.status });
-    }
-
-    const json = await res.json();
-    const items = Array.isArray(json?.items) ? json.items : [];
-
-    // 숫자 가격 추출
-    const prices = [];
-    const brandCountMap = new Map();
-
-    const normalized = items.map((it, idx) => {
-      const price = Number(it.lprice || it.price || 0);
-      if (price > 0) prices.push(price);
-
-      const brandKey = (it.brand && it.brand.trim()) || (it.mallName && it.mallName.trim()) || "기타";
-      brandCountMap.set(brandKey, (brandCountMap.get(brandKey) || 0) + 1);
-
-      return {
-        id: idx + 1,
-        title: it.title?.replace(/<\/?b>/g, "") || "상품",
-        link: it.link,
-        image: it.image,
-        mallName: it.mallName || "",
-        brand: it.brand || "",
-        price,
-      };
-    });
-
-    // 가격 히스토그램 (상하위 5% 제외, 8구간)
-    let bins = [];
-    if (prices.length >= 10) {
-      const sorted = [...prices].sort((a, b) => a - b);
-      const lowIdx = Math.floor(sorted.length * 0.05);
-      const highIdx = Math.ceil(sorted.length * 0.95) - 1;
-      const trimmed = sorted.slice(lowIdx, highIdx + 1);
-      const min = trimmed[0];
-      const max = trimmed[trimmed.length - 1];
-      const bucket = 8;
-      const step = (max - min) / bucket || 1;
-
-      const counts = Array(bucket).fill(0);
-      trimmed.forEach((p) => {
-        let idx = Math.floor((p - min) / step);
-        if (idx >= bucket) idx = bucket - 1;
-        if (idx < 0) idx = 0;
-        counts[idx] += 1;
-      });
-
-      bins = counts.map((c, i) => {
-        const start = Math.round(min + step * i);
-        const end = Math.round(min + step * (i + 1));
-        return { label: `${start.toLocaleString()}~${end.toLocaleString()}원`, value: c };
-      });
-    }
-
-    // 브랜드 분포 Top 10
-    const brandArr = Array.from(brandCountMap.entries()).map(([name, count]) => ({ name, count }));
-    brandArr.sort((a, b) => b.count - a.count);
-    const brandTop10 = brandArr.slice(0, 10);
-
-    return NextResponse.json({
-      ok: true,
-      items: normalized,
-      priceBins: bins,
-      brandTop10,
-    });
-  } catch (e) {
-    return NextResponse.json({ ok: false, error: String(e) }, { status: 500 });
+  const rawText = await r.text();
+  if (!r.ok) {
+    return NextResponse.json({ ok: false, status: r.status, error: rawText }, { status: r.status });
   }
+  const data = JSON.parse(rawText);
+
+  const items = data.items || [];
+  // 브랜드/몰 카운트
+  const brandCount = new Map();
+  const mallCount = new Map();
+
+  // 연관 키워드 후보 추출
+  const kwCount = new Map();
+  for (const it of items) {
+    const brand = (it.brand || "").trim();
+    const mall = (it.mallName || "").trim();
+    if (brand) brandCount.set(brand, (brandCount.get(brand) || 0) + 1);
+    if (mall) mallCount.set(mall, (mallCount.get(mall) || 0) + 1);
+
+    const toks = extractTokens(it.title);
+    for (const t of toks) kwCount.set(t, (kwCount.get(t) || 0) + 1);
+  }
+
+  // 상위 브랜드/몰/연관어 정리
+  const topBrands = [...brandCount.entries()].sort((a,b)=>b[1]-a[1]).slice(0, 20)
+                     .map(([name,count])=>({name,count}));
+  const topMalls  = [...mallCount.entries()].sort((a,b)=>b[1]-a[1]).slice(0, 20)
+                     .map(([name,count])=>({name,count}));
+
+  // 너무 흔한 단어 제거(간단 스톱워드)
+  const stop = new Set(["공식","정품","무료","배송","세일","신상","남성","여성","운동","런닝","구두","신발","브랜드","사이즈","색상"]);
+  const related = [...kwCount.entries()]
+    .filter(([w,c]) => !stop.has(w))
+    .sort((a,b)=>b[1]-a[1])
+    .slice(0, 20)
+    .map(([word,count])=>({word,count}));
+
+  return NextResponse.json({
+    ok: true,
+    total: data.total ?? items.length,
+    items,
+    summary: { topBrands, topMalls, related },
+  });
 }
